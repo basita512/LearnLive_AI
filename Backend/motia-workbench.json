@@ -1,0 +1,28 @@
+[
+  {
+    "id": "hello-world-flow",
+    "config": {
+      "src\\hello\\log-greeting.step.js": {
+        "x": 776,
+        "y": -50
+      },
+      "src\\hello\\hello-api.step.ts": {
+        "x": -204,
+        "y": 15
+      },
+      "src\\hello\\process_greeting_step.py": {
+        "x": 335,
+        "y": 152
+      }
+    }
+  },
+  {
+    "id": "quiz-flow",
+    "config": {
+      "src\\steps\\01.generate-quiz.step.ts": {
+        "x": -795,
+        "y": -20
+      }
+    }
+  }
+]
