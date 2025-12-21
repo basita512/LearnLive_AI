@@ -1,18 +1,52 @@
 [
   {
-    "id": "hello-world-flow",
+    "id": "chat-flow",
     "config": {
-      "src\\hello\\log-greeting.step.js": {
-        "x": 776,
-        "y": -50
+      "src\\steps\\13.chat-session.step.ts": {
+        "x": -95,
+        "y": 12
       },
-      "src\\hello\\hello-api.step.ts": {
-        "x": -204,
-        "y": 15
+      "src\\steps\\15_rag_retrieval_step.py": {
+        "x": 211,
+        "y": 46
+      }
+    }
+  },
+  {
+    "id": "oral-test-flow",
+    "config": {
+      "src\\steps\\05.submit-answer.step.ts": {
+        "x": -143,
+        "y": -12
       },
-      "src\\hello\\process_greeting_step.py": {
-        "x": 335,
-        "y": 152
+      "src\\steps\\15_rag_retrieval_step.py": {
+        "x": 243,
+        "y": 124
+      },
+      "src\\steps\\06_eval_answer_step.py": {
+        "x": 240,
+        "y": -74
+      },
+      "src\\steps\\07.analyze-perf.step.ts": {
+        "x": 522,
+        "y": 45
+      },
+      "src\\steps\\08.notify-users.step.ts": {
+        "x": 842,
+        "y": 80
+      }
+    }
+  },
+  {
+    "id": "maintenance-flow",
+    "config": {
+      "src\\steps\\14.system-events.step.ts": {
+        "x": 328,
+        "y": 34
+      },
+      "src\\steps\\12.cleanup-data.step.ts": {
+        "x": 18,
+        "y": 6
       }
     }
   },
@@ -22,6 +56,105 @@
       "src\\steps\\01.generate-quiz.step.ts": {
         "x": -795,
         "y": -20
+      },
+      "src\\steps\\15_rag_retrieval_step.py": {
+        "x": -308,
+        "y": 139
+      },
+      "src\\steps\\02_gen_quiz-ai_step.py": {
+        "x": -301,
+        "y": -62
+      },
+      "src\\steps\\08.notify-users.step.ts": {
+        "x": 631,
+        "y": 84
+      },
+      "src\\steps\\07.analyze-perf.step.ts": {
+        "x": 422,
+        "y": 84
+      }
+    }
+  },
+  {
+    "id": "rag-flow",
+    "config": {
+      "src\\steps\\03.upload-pdf.step.ts": {
+        "x": 1,
+        "y": 0
+      },
+      "src\\steps\\15_rag_retrieval_step.py": {
+        "x": 580,
+        "y": 40
+      },
+      "src\\steps\\04_process_pdf_step.py": {
+        "x": 305,
+        "y": 34
+      }
+    }
+  },
+  {
+    "id": "analytics-flow",
+    "config": {
+      "src\\steps\\16.get-roadmap.step.ts": {
+        "x": 907,
+        "y": 80
+      }
+    }
+  },
+  {
+    "id": "learnlive-flow",
+    "config": {
+      "src\\steps\\01.generate-quiz.step.ts": {
+        "x": -374,
+        "y": 208
+      },
+      "src\\steps\\02_gen_quiz-ai_step.py": {
+        "x": 105,
+        "y": 162
+      },
+      "src\\steps\\03.upload-pdf.step.ts": {
+        "x": 91,
+        "y": 10
+      },
+      "src\\steps\\05.submit-answer.step.ts": {
+        "x": -733,
+        "y": 354
+      },
+      "src\\steps\\06_eval_answer_step.py": {
+        "x": 100,
+        "y": 595
+      },
+      "src\\steps\\07.analyze-perf.step.ts": {
+        "x": 406,
+        "y": 305
+      },
+      "src\\steps\\04_process_pdf_step.py": {
+        "x": 621,
+        "y": 45
+      },
+      "src\\steps\\08.daily-summary.step.ts": {
+        "x": 770,
+        "y": 367
+      },
+      "src\\steps\\09.cleanup-data.step.ts": {
+        "x": 1097,
+        "y": 285
+      },
+      "src\\steps\\10.chat-session.step.ts": {
+        "x": -498,
+        "y": 613
+      },
+      "src\\steps\\11.system-events.step.ts": {
+        "x": 1097,
+        "y": 188
+      },
+      "src\\steps\\12_rag_retrieval_step.py": {
+        "x": 108,
+        "y": 388
+      },
+      "src\\steps\\13.get-roadmap.step.ts": {
+        "x": 1106,
+        "y": 445
       }
     }
   }

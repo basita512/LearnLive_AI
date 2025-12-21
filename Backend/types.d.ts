@@ -8,21 +8,23 @@ import { EventHandler, ApiRouteHandler, ApiResponse, MotiaStream, CronHandler } 
 
 declare module 'motia' {
   interface FlowContextStateStreams {
-    
+
   }
 
   interface Handlers {
-    '01.generate-quiz': ApiRouteHandler<Record<string, unknown>, unknown, never>
-    '03.upload-pdf': ApiRouteHandler<Record<string, unknown>, unknown, never>
-    '05.submit-answer': ApiRouteHandler<Record<string, unknown>, unknown, never>
-    '07.analyze-perf': EventHandler<never, { topic: 'performance.analyzed'; data: never } | { topic: 'roadmap.generated'; data: never }>
-    '08.notify-users': EventHandler<never, { topic: 'notification.sent'; data: never }>
-    '10.spaced-repetition': CronHandler<{ topic: 'review.scheduled'; data: never }>
-    '11.weekly-report': CronHandler<{ topic: 'report.generated'; data: never }>
-    '12.cleanup-data': CronHandler<never>
-    '13.chat-session': ApiRouteHandler<Record<string, unknown>, unknown, never>
-    '09.daily-summary': CronHandler<{ topic: 'summary.generated'; data: never }>
-    '14.system-events': EventHandler<never, never>
+    '01.generate-quiz': ApiRouteHandler<Record<string, unknown>, unknown, { topic: 'quiz.requested'; data: never } | { topic: 'rag.retrieval.requested'; data: never }>
+    '02.gen-quiz-ai': EventHandler<never, { topic: 'quiz.generated'; data: never } | { topic: 'test.completed'; data: never }>
+    '03.upload-pdf': ApiRouteHandler<Record<string, unknown>, unknown, { topic: 'pdf.uploaded'; data: never }>
+    '04.process-pdf': EventHandler<never, { topic: 'pdf.processed'; data: never } | { topic: 'pdf.chunk.processed'; data: never }>
+    '05.submit-answer': ApiRouteHandler<Record<string, unknown>, unknown, { topic: 'answer.submitted'; data: never } | { topic: 'rag.retrieval.requested'; data: never }>
+    '06.eval-answer': EventHandler<never, { topic: 'answer.evaluated'; data: never } | { topic: 'test.completed'; data: never }>
+    '07.analyze-perf': EventHandler<never, { topic: 'performance.analyzed'; data: never }>
+    '08.daily-summary': CronHandler<{ topic: 'summary.generated'; data: never }>
+    '09.cleanup-data': CronHandler<never>
+    '10.chat-session': ApiRouteHandler<Record<string, unknown>, unknown, { topic: 'rag.retrieval.requested'; data: never }>
+    '11.system-events': EventHandler<never, never>
+    '12.rag-retrieval': EventHandler<never, { topic: 'rag.retrieval.completed'; data: never }>
+    '13.get-roadmap': ApiRouteHandler<Record<string, unknown>, unknown, never>
   }
-    
+
 }

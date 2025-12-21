@@ -1,9 +1,9 @@
-node_modules
-python_modules
-.venv
-venv
-.motia
-.mermaid
-dist
-*.pyc
+node_modules/
+python_modules/
+dist/
+.motia/
 .env
+.claude/
+.cursor/
+.gemini/
+*.pyc
