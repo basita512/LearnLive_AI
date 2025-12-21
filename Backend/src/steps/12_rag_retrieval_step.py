@@ -1,33 +1,28 @@
-from motia import StepConfig, StepHandler
 import os
-import json
-import numpy as np
-import faiss
+from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer, CrossEncoder
 
 # --- CONFIG ---
-config = StepConfig(
-    name="15.rag-retrieval",
-    type="event",
-    subscribes=["rag.retrieval.requested"],
-    emits=["rag.retrieval.completed"],
-    flows=["rag-flow", "chat-flow"]
-)
+config = {
+    "type": "event",
+    "name": "15.rag-retrieval",
+    "subscribes": ["rag.retrieval.requested"],
+    "emits": ["rag.retrieval.completed"],
+    "flows": ["learnlive-flow"]
+}
 
 # Constants
-VECTOR_STORE_DIR = "./vector_store"
-INDEX_FILE = os.path.join(VECTOR_STORE_DIR, "vector_kb.index")
-META_FILE = os.path.join(VECTOR_STORE_DIR, "vector_kb_meta.json")
+INDEX_NAME = "learnlive-rag"
 
 # --- GLOBALS ---
 embed_model = None
 reranker_model = None
-faiss_index = None
-metadata_store = {}
+pc = None
+index = None
 
 # --- INITIALIZATION ---
 def initialize_resources(ctx):
-    global embed_model, reranker_model, faiss_index, metadata_store
+    global embed_model, reranker_model, pc, index
     
     # 1. Load Embedding Model
     if embed_model is None:
@@ -39,20 +34,27 @@ def initialize_resources(ctx):
         ctx.logger.info("[15.rag-retrieval] Loading CrossEncoder Re-ranker...")
         reranker_model = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
 
-    # 3. Load FAISS Index & Metadata
-    if faiss_index is None:
-        if os.path.exists(INDEX_FILE) and os.path.exists(META_FILE):
-             ctx.logger.info("[15.rag-retrieval] Loading FAISS index and metadata...")
-             faiss_index = faiss.read_index(INDEX_FILE)
-             with open(META_FILE, 'r') as f:
-                 metadata_store = json.load(f)
-        else:
-            ctx.logger.info("[15.rag-retrieval] Index not found! Please upload a PDF first.")
-            faiss_index = None
+    # 3. Connect to Pinecone
+    if pc is None:
+        api_key = os.getenv("PINECONE_API_KEY")
+        if not api_key:
+            ctx.logger.info("[15.rag-retrieval] PINECONE_API_KEY not found!")
+            return
+             
+        ctx.logger.info("[15.rag-retrieval] Connecting to Pinecone...")
+        pc = Pinecone(api_key=api_key)
+        
+        try:
+            index = pc.Index(INDEX_NAME)
+            stats = index.describe_index_stats()
+            ctx.logger.info(f"[15.rag-retrieval] Connected. Total vectors: {stats.get('total_vector_count', 0)}")
+        except Exception as e:
+            ctx.logger.info(f"[15.rag-retrieval] Index not found: {e}")
+            index = None
 
 # --- MOTIA HANDLER ---
 async def handler(ctx):
-    global faiss_index, metadata_store
+    global index
     
     query = ctx.payload.get('query')
     request_id = ctx.payload.get('requestId')
@@ -60,33 +62,38 @@ async def handler(ctx):
     
     initialize_resources(ctx)
     
-    if faiss_index is None or faiss_index.ntotal == 0:
+    if index is None:
         await ctx.emit('rag.retrieval.completed', {
             "requestId": request_id, 
-            "context": "No knowledge base documents found.",
+            "context": "No knowledge base found. Please upload a PDF first.",
             "source": None
         })
         return
 
     # 1. Initial Retrieval (Top 10)
     ctx.logger.info("[15.rag-retrieval] Retrieval: Generating query embedding...")
-    query_emb = embed_model.encode([query], convert_to_numpy=True)
+    query_emb = embed_model.encode([query], convert_to_numpy=True)[0].tolist()
     
     k = 10
-    distances, indices = faiss_index.search(query_emb, k)
+    ctx.logger.info(f"[15.rag-retrieval] Querying Pinecone (Top {k})...")
+    
+    results = index.query(
+        vector=query_emb,
+        top_k=k,
+        include_metadata=True
+    )
     
     # Collect candidate chunks
     candidates = []
     
-    for i, idx in enumerate(indices[0]):
-        if idx == -1: continue
-        doc_id = str(idx)
-        if doc_id in metadata_store:
-            meta = metadata_store[doc_id]
+    if results.get('matches'):
+        for match in results['matches']:
+            metadata = match.get('metadata', {})
             candidates.append({
-                "text": meta['text'],
-                "docId": doc_id,
-                "score": float(distances[0][i]) # FAISS L2 distance (smaller is better)
+                "text": metadata.get('text', ''),
+                "docId": match['id'],
+                "score": match['score'],
+                "meta": metadata
             })
 
     if not candidates:
@@ -112,13 +119,15 @@ async def handler(ctx):
     
     # 3. Select Top Result
     top_result = sorted_candidates[0]
-    ctx.logger.info(f"[15.rag-retrieval] Top result score: {top_result['rerank_score']}")
+    ctx.logger.info(f"[15.rag-retrieval] Top result score: {top_result['rerank_score']:.4f}")
     
     # 4. Return Context
+    filename = top_result['meta'].get('fileName', 'unknown')
+    
     await ctx.emit('rag.retrieval.completed', {
         "requestId": request_id,
         "context": top_result['text'],
-        "source": top_result.get('fileName', 'unknown'),
+        "source": filename,
         "rerankScore": top_result['rerank_score']
     })
     

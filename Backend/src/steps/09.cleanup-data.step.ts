@@ -5,7 +5,7 @@ export const config: StepConfig = {
     type: 'cron',
     cron: '0 2 * * *', // Nightly at 2 AM
     emits: [],
-    flows: ['maintenance-flow']
+    flows: ['learnlive-flow']
 };
 
 export const handler = async (ctx: any) => {
