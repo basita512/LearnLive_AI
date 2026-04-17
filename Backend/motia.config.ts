@@ -8,3 +8,4 @@ import bullmqPlugin from '@motiadev/plugin-bullmq/plugin'
 export default defineConfig({
   plugins: [observabilityPlugin, statesPlugin, endpointPlugin, logsPlugin, bullmqPlugin],
 })
+

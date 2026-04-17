@@ -1,7 +1,7 @@
-import { StepConfig, StepHandler } from 'motia';
+import { StepConfig } from 'motia';
 
 export const config: StepConfig = {
-    name: '13.chat-session',
+    name: '10.chat-session',
     type: 'api',
     path: '/chat',
     method: 'POST',
@@ -9,63 +9,60 @@ export const config: StepConfig = {
     flows: ['learnlive-flow']
 };
 
-export const handler = async (ctx: any) => {
-    ctx.logger.info('[13.chat-session] New chat message received for session:', ctx.body.sessionId);
-    const { sessionId, message } = ctx.body;
+export const handler = async (req: any, { logger, emit, state, stream }: any) => {
+    logger.info('[10.chat-session] New chat message');
+    const { message, sessionId } = req.body;
+    const requestId = req.id;
 
-    // 1. Retrieve Conversation History from State
-    const history = (await ctx.getState(`chat:${sessionId}`)) || [];
+    stream('🔍 Searching knowledge base...\n\n');
 
-    // Add user message
-    history.push({ role: 'user', content: message });
-    await ctx.setState(`chat:${sessionId}`, history);
-
-    // 2. Stream thought process
-    ctx.stream('🔍 Searching knowledge base...');
-
-    // 3. Request Context from RAG Service
-    const retrievalId = `${sessionId}-${Date.now()}`;
-    await ctx.emit('rag.retrieval.requested', {
-        requestId: retrievalId,
-        query: message
+    // 1. Request RAG context
+    const ragRequestId = `chat-${requestId}`;
+    await emit({
+        topic: 'rag.retrieval.requested',
+        data: {
+            requestId: ragRequestId,
+            query: message
+        }
     });
 
-    // Durable wait for retrieval result
-    const ragResult = await ctx.waitFor('rag.retrieval.completed', {
-        filter: (e: any) => e.requestId === retrievalId,
-        timeout: 10000 // 10s timeout for retrieval
-    });
+    // 2. Poll for RAG results
+    let context = "No context found";
+    let source = null;
 
-    const context = ragResult.context || "No specific information found in your materials.";
-
-    if (ragResult.source) {
-        ctx.stream(`📚 Found relevant info in ${ragResult.source}...\n\n`);
+    for (let i = 0; i < 10; i++) {
+        const ragResult = await state.get(`rag:result:${ragRequestId}`);
+        if (ragResult) {
+            context = ragResult.context || "No context found";
+            source = ragResult.source;
+            await state.delete(`rag:result:${ragRequestId}`);
+            break;
+        }
+        await new Promise(r => setTimeout(r, 1000));
     }
 
-    // 4. Generate Natural Response using Gemini
-    ctx.stream('💭 Formulating answer...\n\n');
+    if (source) {
+        stream(`📚 Found relevant info in ${source}...\n\n`);
+    }
 
+    stream('💭 Formulating answer...\n\n');
+
+    // 3. Generate response using Gemini with RAG context
     const apiKey = process.env.GEMINI_API_KEY;
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
-    const prompt = `You are a helpful educational assistant helping a student understand their course material.
+    const prompt = `You are a helpful educational assistant.
 
-CONTEXT FROM STUDENT'S MATERIALS (${ragResult.source || 'knowledge base'}):
+CONTEXT FROM KNOWLEDGE BASE (${source || 'documents'}):
 ${context}
 
 STUDENT'S QUESTION:
 "${message}"
 
-CONVERSATION HISTORY:
-${history.slice(-4).map((h: any) => `${h.role}: ${h.content}`).join('\n')}
-
 Instructions:
-- Answer the student's question using the context provided
+- Answer using the context provided above
 - Be conversational, friendly, and encouraging
-- Explain concepts in simple, easy-to-understand language
-- If the context doesn't fully answer the question, acknowledge what you know and what you don't
-- Keep your response concise but informative (2-3 paragraphs max)
-- Use analogies or examples when helpful
+- Keep response concise (2-3 paragraphs max)
 
 Respond naturally:`;
 
@@ -74,53 +71,44 @@ Respond naturally:`;
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                contents: [{
-                    parts: [{ text: prompt }]
-                }]
+                contents: [{ parts: [{ text: prompt }] }]
             })
         });
 
         const result = await response.json();
         const aiResponse = result.candidates[0].content.parts[0].text;
 
-        // Stream the response word by word for better UX
+        // Stream the response word by word
         const words = aiResponse.split(' ');
-        let streamedResponse = "";
-
         for (const word of words) {
-            streamedResponse += word + " ";
-            ctx.stream(word + " ");
-            await new Promise(r => setTimeout(r, 50)); // Typing effect
+            stream(word + " ");
+            await new Promise(r => setTimeout(r, 50));
         }
 
-        // 5. Update history with assistant response
-        history.push({ role: 'assistant', content: streamedResponse.trim() });
-        await ctx.setState(`chat:${sessionId}`, history);
-
-        ctx.stream('\n\n✅ done');
+        stream('\n\n✅ done');
 
         return {
-            success: true,
-            historyLength: history.length,
-            contextUsed: !!ragResult.source,
-            source: ragResult.source
+            status: 200,
+            body: {
+                success: true,
+                response: aiResponse,
+                contextUsed: !!source
+            }
         };
     } catch (error: any) {
-        ctx.logger.info(`[13.chat-session] Gemini API error: ${error.message}`);
+        logger.info(`[10.chat-session] Error: ${error.message}`);
 
-        // Fallback to context-only response
-        const fallbackResponse = `Based on your materials: ${context}`;
-        history.push({ role: 'assistant', content: fallbackResponse });
-        await ctx.setState(`chat:${sessionId}`, history);
-
-        ctx.stream(fallbackResponse);
-        ctx.stream('\n\n⚠️ done');
+        const fallback = `Based on your materials: ${context}`;
+        stream(fallback);
+        stream('\n\n⚠️ done');
 
         return {
-            success: true,
-            historyLength: history.length,
-            contextUsed: !!ragResult.source,
-            error: 'Gemini API unavailable, returned raw context'
+            status: 200,
+            body: {
+                success: true,
+                response: fallback,
+                contextUsed: !!source
+            }
         };
     }
 };

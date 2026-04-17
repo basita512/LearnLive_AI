@@ -1,6 +1,5 @@
-import json
 import os
-import requests
+import json
 
 config = {
     "type": "event",
@@ -10,19 +9,18 @@ config = {
     "flows": ["learnlive-flow"]
 }
 
-async def handler(ctx):
-    ctx.logger.info(f"[06.eval-answer] Evaluating answer for request {ctx.payload.get('requestId')}")
-    data = ctx.payload
+async def handler(input_data, context):
+    context.logger.info(f"[06.eval-answer] Evaluating answer for request {input_data.get('requestId')}")
     
     # Configure Gemini API
     api_key = os.getenv("GEMINI_API_KEY")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
     # Extract reference context if available
-    reference_context = data.get('referenceContext', 'No reference material available.')
-    reference_source = data.get('referenceSource', 'Unknown')
+    reference_context = input_data.get('referenceContext', 'No reference material available.')
+    reference_source = input_data.get('referenceSource', 'Unknown')
     
-    ctx.logger.info(f"[06.eval-answer] Using reference from: {reference_source}")
+    context.logger.info(f"[06.eval-answer] Using reference from: {reference_source}")
     
     prompt = f"""
     You are an oral examiner evaluating a student's answer against reference material from their curriculum.
@@ -30,19 +28,16 @@ async def handler(ctx):
     REFERENCE MATERIAL FROM {reference_source}:
     {reference_context}
     
-    QUESTION: "{data['question']}"
-    STUDENT ANSWER (Transcript): "{data['transcript']}"
+    QUESTION: {input_data['question']}
+    STUDENT'S ANSWER: {input_data['userAnswer']}
     
-    Evaluate the student's answer by comparing it to the reference material above.
-    - Award points based on accuracy and completeness relative to the reference
-    - Provide constructive feedback based on what the reference material says
+    Evaluate the answer based on accuracy, completeness, and clarity.
     
-    Return JSON with:
-    - score (1-10, based on how well the answer matches the reference)
-    - feedback (short constructive feedback comparing to reference)
-    - speakableResponse (a natural, conversational response. E.g. "Good! You mentioned X from the textbook. However, the material also emphasizes Y.")
+    Return ONLY a JSON object with keys: score (0-10), feedback (brief text), speakableResponse (natural oral feedback).
+    Example: {{"score": 8, "feedback": "Good explanation, but missed point X.", "speakableResponse": "Well done! You covered the main concepts..."}}
     """
     
+    import requests
     response = requests.post(url, json={
         "contents": [{
             "parts": [{"text": prompt}]
@@ -51,26 +46,41 @@ async def handler(ctx):
     
     result = response.json()
     text = result['candidates'][0]['content']['parts'][0]['text']
+    
+    # Cleanup
     text = text.replace("```json", "").replace("```", "").strip()
     evaluation = json.loads(text)
     
-    # Emit answer evaluation
-    await ctx.emit('answer.evaluated', {
-        'requestId': data['requestId'],
-        'feedback': evaluation['feedback'],
-        'score': evaluation['score'],
-        'speakableResponse': evaluation['speakableResponse']
+    request_id = input_data.get('requestId')
+    
+    # Write to state for API polling
+    await context.state.set('answer-result', request_id, {
+        'feedback': evaluation.get('feedback', ''),
+        'score': evaluation.get('score', 0),
+        'speakableResponse': evaluation.get('speakableResponse', '')
+    })
+    
+    # Emit events
+    await context.emit({
+        'topic': 'answer.evaluated',
+        'data': {
+            'requestId': request_id,
+            'score': evaluation['score'],
+            'feedback': evaluation['feedback']
+        }
     })
     
     # Emit test completed for analytics
-    await ctx.emit('test.completed', {
-        'studentId': data.get('studentId'),
-        'testId': data['requestId'],
-        'testType': 'oral-test',
-        'question': data['question'],
-        'score': evaluation['score'],
-        'total': 10,  # Oral tests are out of 10
-        'referenceSource': reference_source
+    await context.emit({
+        'topic': 'test.completed',
+        'data': {
+            'studentId': input_data.get('studentId'),
+            'testId': request_id,
+            'testType': 'oral',
+            'question': input_data.get('question'),
+            'score': evaluation['score'],
+            'total': 10
+        }
     })
     
-    return {'status': 'evaluated', 'score': evaluation['score'], 'reference_used': reference_source}
+    return {'evaluated': True, 'score': evaluation['score']}

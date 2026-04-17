@@ -5,7 +5,7 @@ from sentence_transformers import SentenceTransformer, CrossEncoder
 # --- CONFIG ---
 config = {
     "type": "event",
-    "name": "15.rag-retrieval",
+    "name": "12.rag-retrieval",
     "subscribes": ["rag.retrieval.requested"],
     "emits": ["rag.retrieval.completed"],
     "flows": ["learnlive-flow"]
@@ -63,6 +63,12 @@ async def handler(ctx):
     initialize_resources(ctx)
     
     if index is None:
+        # Write to state for API polling
+        await ctx.setState(f'rag:result:{request_id}', {
+            "context": "No knowledge base found. Please upload a PDF first.",
+            "source": None
+        })
+        
         await ctx.emit('rag.retrieval.completed', {
             "requestId": request_id, 
             "context": "No knowledge base found. Please upload a PDF first.",
@@ -97,6 +103,12 @@ async def handler(ctx):
             })
 
     if not candidates:
+        # Write to state for API polling
+        await ctx.setState(f'rag:result:{request_id}', {
+            "context": "No relevant context found.",
+            "source": None
+        })
+        
         await ctx.emit('rag.retrieval.completed', {
             "requestId": request_id, 
             "context": "No relevant context found.",
@@ -121,14 +133,21 @@ async def handler(ctx):
     top_result = sorted_candidates[0]
     ctx.logger.info(f"[15.rag-retrieval] Top result score: {top_result['rerank_score']:.4f}")
     
-    # 4. Return Context
+    # 4. Write to state and emit result
     filename = top_result['meta'].get('fileName', 'unknown')
     
-    await ctx.emit('rag.retrieval.completed', {
-        "requestId": request_id,
+    result_data = {
         "context": top_result['text'],
         "source": filename,
         "rerankScore": top_result['rerank_score']
+    }
+    
+    # Write to state for API polling
+    await ctx.setState(f'rag:result:{request_id}', result_data)
+    
+    await ctx.emit('rag.retrieval.completed', {
+        "requestId": request_id,
+        **result_data
     })
     
     return {"status": "retrieved", "candidates": len(candidates)}

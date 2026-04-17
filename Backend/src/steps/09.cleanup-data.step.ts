@@ -1,7 +1,7 @@
 import { StepConfig, StepHandler } from 'motia';
 
 export const config: StepConfig = {
-    name: '12.cleanup-data',
+    name: '09.cleanup-data',
     type: 'cron',
     cron: '0 2 * * *', // Nightly at 2 AM
     emits: [],

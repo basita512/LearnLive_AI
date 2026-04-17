@@ -10,19 +10,18 @@ config = {
     "flows": ["learnlive-flow"]
 }
 
-async def handler(ctx):
-    ctx.logger.info(f"[02.gen-quiz-ai] Received quiz request {ctx.payload.get('requestId')}")
-    data = ctx.payload
+async def handler(input_data, context):
+    context.logger.info(f"[02.gen-quiz-ai] Received quiz request {input_data.get('requestId')}")
     
     # Configure Gemini API
     api_key = os.getenv("GEMINI_API_KEY")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
     # Extract RAG context if available
-    rag_context = data.get('ragContext', 'No context provided.')
-    rag_source = data.get('ragSource', 'Unknown')
+    rag_context = input_data.get('ragContext', 'No context provided.')
+    rag_source = input_data.get('ragSource', 'Unknown')
     
-    ctx.logger.info(f"[02.gen-quiz-ai] Using RAG context from: {rag_source}")
+    context.logger.info(f"[02.gen-quiz-ai] Using RAG context from: {rag_source}")
     
     prompt = f"""
     You are an educational quiz generator. Use the following context from the knowledge base to generate relevant questions.
@@ -31,8 +30,8 @@ async def handler(ctx):
     {rag_context}
     
     TASK:
-    Generate a {data['numQuestions']}-question quiz about {data['topic']} 
-    at {data['difficulty']} level.
+    Generate a {input_data['numQuestions']}-question quiz about {input_data['topic']} 
+    at {input_data['difficulty']} level.
     
     Base your questions on the provided context above. Make sure the questions are relevant to the material.
     
@@ -53,22 +52,32 @@ async def handler(ctx):
     text = text.replace("```json", "").replace("```", "").strip()
     questions = json.loads(text)
     
-    # Emit quiz generated
-    await ctx.emit('quiz.generated', {
-        'requestId': data['requestId'],
-        'questions': questions
+    # Write result to state for API to poll
+    await context.state.set(f'quiz:result:{input_data["requestId"]}', {
+        'questions': questions,
+        'contextSource': rag_source
     })
     
-    # Emit test completed for analytics (assuming quiz will be taken)
-    # Note: In production, this should be emitted when student SUBMITS quiz answers
-    await ctx.emit('test.completed', {
-        'studentId': data.get('studentId'),
-        'testId': data['requestId'],
-        'testType': 'quiz',
-        'topic': data['topic'],
-        'difficulty': data['difficulty'],
-        'totalQuestions': len(questions),
-        'generatedAt': ctx.utils.dates.now().isoformat() if hasattr(ctx, 'utils') else None
+    # Emit quiz generated
+    await context.emit({
+        'topic': 'quiz.generated',
+        'data': {
+            'requestId': input_data['requestId'],
+            'questions': questions
+        }
+    })
+    
+    # Emit test completed for analytics
+    await context.emit({
+        'topic': 'test.completed',
+        'data': {
+            'studentId': input_data.get('studentId'),
+            'testId': input_data['requestId'],
+            'testType': 'quiz',
+            'topic': input_data['topic'],
+            'difficulty': input_data['difficulty'],
+            'totalQuestions': len(questions)
+        }
     })
     
     return {'generated_count': len(questions), 'context_used': rag_source}

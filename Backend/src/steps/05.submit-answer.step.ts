@@ -1,4 +1,4 @@
-import { StepConfig, StepHandler } from 'motia';
+import { StepConfig } from 'motia';
 
 export const config: StepConfig = {
     name: '05.submit-answer',
@@ -9,54 +9,69 @@ export const config: StepConfig = {
     flows: ['learnlive-flow']
 };
 
-export const handler = async (ctx: any) => {
-    ctx.logger.info('[05.submit-answer] Started processing request:', ctx.id);
-    const { transcript, question, studentId } = ctx.body;
-    const requestId = ctx.id;
+export const handler = async (req: any, { logger, emit, state }: any) => {
+    logger.info('[05.submit-answer] Processing answer');
+    const { transcript, question, studentId } = req.body;
+    const requestId = req.id;
+
+    logger.info(`[05.submit-answer] Requesting RAG context for question: ${question}`);
 
     // 1. Request RAG Retrieval for the question
-    ctx.logger.info(`[05.submit-answer] Requesting RAG context for question: ${question}`);
-
     const ragRequestId = `oral-${requestId}`;
-    await ctx.emit('rag.retrieval.requested', {
-        requestId: ragRequestId,
-        query: question
+    await emit({
+        topic: 'rag.retrieval.requested',
+        data: {
+            requestId: ragRequestId,
+            query: question
+        }
     });
 
-    // 2. Wait for RAG context (reference answer from PDF)
-    const ragResult = await ctx.waitFor('rag.retrieval.completed', {
-        filter: (e: any) => e.requestId === ragRequestId,
-        timeout: 15000 // 15 seconds
+    // 2. Emit to Python AI for evaluation
+    await emit({
+        topic: 'answer.submitted',
+        data: {
+            requestId,
+            studentId,
+            transcript,
+            question
+        }
     });
 
-    const referenceContext = ragResult.context || "No reference material found.";
-    ctx.logger.info(`[05.submit-answer] Retrieved reference from ${ragResult.source || 'RAG'}`);
+    // 3. Poll state for results from Python worker
+    const maxAttempts = 45; // 45 seconds max wait
+    let attempts = 0;
 
-    // 3. Emit to Python AI for evaluation with RAG context
-    await ctx.emit('answer.submitted', {
-        requestId,
-        studentId,
-        transcript,
-        question,
-        referenceContext: referenceContext,
-        referenceSource: ragResult.source
-    });
+    while (attempts < maxAttempts) {
+        const result = await state.get(`answer:result:${requestId}`);
+        if (result) {
+            // Clean up state
+            await state.delete(`answer:result:${requestId}`);
 
-    // 4. Durable Wait: Wait for AI evaluation
-    const evaluation = await ctx.waitFor('answer.evaluated', {
-        filter: (e: any) => e.requestId === requestId,
-        timeout: 45000 // 45s wait
-    });
+            return {
+                status: 200,
+                body: {
+                    success: true,
+                    feedback: result.feedback,
+                    score: result.score,
+                    speakableResponse: result.speakableResponse,
+                    metadata: {
+                        referenceSource: result.referenceSource || 'No source',
+                        evaluatedBy: 'Gemini 1.5 Flash (Python)'
+                    }
+                }
+            };
+        }
 
-    // 5. Return result to frontend
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+    }
+
+    // Timeout
     return {
-        success: true,
-        feedback: evaluation.feedback,
-        score: evaluation.score,
-        speakableResponse: evaluation.speakableResponse,
-        metadata: {
-            referenceSource: ragResult.source || 'No source',
-            evaluatedBy: 'Gemini 1.5 Flash (Python)'
+        status: 408,
+        body: {
+            success: false,
+            error: 'Answer evaluation timed out'
         }
     };
 };

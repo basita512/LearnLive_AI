@@ -1,4 +1,4 @@
-import { StepConfig, StepHandler } from 'motia';
+import { StepConfig } from 'motia';
 
 export const config: StepConfig = {
     name: '01.generate-quiz',
@@ -9,54 +9,70 @@ export const config: StepConfig = {
     flows: ['learnlive-flow']
 };
 
-export const handler = async (ctx: any) => {
-    ctx.logger.info('[01.generate-quiz] Started processing request:', ctx.id);
-    const { studentId, topic, difficulty, numQuestions } = ctx.body;
-    const requestId = ctx.id;
+export const handler = async (req: any, { logger, emit, state }: any) => {
+    logger.info('[01.generate-quiz] Started processing');
+    const { studentId, topic, difficulty, numQuestions } = req.body;
+    const requestId = req.id;
+
+    logger.info(`[01.generate-quiz] Requesting RAG context for topic: ${topic}`);
 
     // 1. Request RAG Retrieval for the topic
-    ctx.logger.info(`[01.generate-quiz] Requesting RAG context for topic: ${topic}`);
-
     const ragRequestId = `quiz-${requestId}`;
-    await ctx.emit('rag.retrieval.requested', {
-        requestId: ragRequestId,
-        query: topic
+    await emit({
+        topic: 'rag.retrieval.requested',
+        data: {
+            requestId: ragRequestId,
+            query: topic
+        }
     });
 
-    // 2. Wait for RAG context
-    const ragResult = await ctx.waitFor('rag.retrieval.completed', {
-        filter: (e: any) => e.requestId === ragRequestId,
-        timeout: 15000 // 15 seconds
+    // 2. Emit event to trigger Python AI Worker
+    await emit({
+        topic: 'quiz.requested',
+        data: {
+            requestId,
+            studentId,
+            topic,
+            difficulty,
+            numQuestions
+        }
     });
 
-    const context = ragResult.context || "No context available from knowledge base.";
-    ctx.logger.info(`[01.generate-quiz] Retrieved context from ${ragResult.source || 'RAG'}`);
+    // 3. Poll state for results (event handlers will write here)
+    // In Motia, event handlers write results to state, API polls state
+    const maxAttempts = 60; // 60 seconds max wait
+    let attempts = 0;
 
-    // 3. Emit event to trigger Python AI Worker with RAG context
-    await ctx.emit('quiz.requested', {
-        requestId,
-        studentId,
-        topic,
-        difficulty,
-        numQuestions,
-        ragContext: context,
-        ragSource: ragResult.source
-    });
+    while (attempts < maxAttempts) {
+        const result = await state.get(`quiz:result:${requestId}`);
+        if (result) {
+            // Clean up state
+            await state.delete(`quiz:result:${requestId}`);
 
-    // 4. Durable Wait: Pause execution until Python replies
-    const result = await ctx.waitFor('quiz.generated', {
-        filter: (e: any) => e.requestId === requestId,
-        timeout: 60000 // 1 minute timeout
-    });
+            return {
+                status: 200,
+                body: {
+                    success: true,
+                    data: result.questions,
+                    metadata: {
+                        generatedBy: 'Gemini 1.5 Flash (Python)',
+                        orchestratedBy: 'Motia (TypeScript)',
+                        contextSource: result.contextSource || 'RAG'
+                    }
+                }
+            };
+        }
 
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+    }
+
+    // Timeout
     return {
-        success: true,
-        data: result.questions,
-        metadata: {
-            generatedBy: 'Gemini 1.5 Flash (Python)',
-            orchestratedBy: 'Motia (TypeScript)',
-            contextSource: ragResult.source || 'No source',
-            latency: Date.now() - ctx.startTime
+        status: 408,
+        body: {
+            success: false,
+            error: 'Quiz generation timed out'
         }
     };
 };

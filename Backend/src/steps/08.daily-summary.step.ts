@@ -2,7 +2,7 @@ import { StepConfig, StepHandler } from 'motia';
 import { Database } from '../lib/db';
 
 export const config: StepConfig = {
-    name: '09.daily-summary',
+    name: '08.daily-summary',
     type: 'cron',
     cron: '0 20 * * *', // Daily at 8 PM
     emits: ['summary.generated'],

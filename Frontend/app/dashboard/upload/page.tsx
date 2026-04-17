@@ -2,28 +2,35 @@
 
 import type React from "react"
 
-import { motion } from "framer-motion"
-import { Upload, FileText, CheckCircle2 } from "lucide-react"
-import { useState } from "react"
 import { useRouter } from "next/navigation"
+import { Upload, X, CheckCircle2, FileText } from "lucide-react"
+import { motion } from "framer-motion"
+import pdfToText from "react-pdftotext"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
+import { useToast } from "@/hooks/use-toast"
+import { Loader2 } from "lucide-react"
 
 export default function UploadPage() {
   const router = useRouter()
+  const { toast } = useToast()
   const [file, setFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
+  const [uploadStatus, setUploadStatus] = useState("")
   const [suggestedTopics, setSuggestedTopics] = useState<string[]>([])
   const [selectedTopics, setSelectedTopics] = useState<string[]>([])
   const [docId, setDocId] = useState("")
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0]
-    if (selectedFile && selectedFile.type === "application/pdf") {
-      setFile(selectedFile)
-      handleUpload(selectedFile)
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (file && file.type === "application/pdf") {
+      const timestamp = new Date().toISOString();
+      console.log(`[${timestamp}] [Upload] File selected:`, file.name, `(${file.size} bytes)`);
+      setFile(file)
+      handleUpload(file)
     }
   }
 
@@ -37,13 +44,19 @@ export default function UploadPage() {
   }
 
   const handleUpload = async (fileToUpload: File) => {
+    const uploadStartTime = Date.now();
+    const startTimestamp = new Date().toISOString();
+    console.log(`[${startTimestamp}] ========== UPLOAD STARTED ==========`);
+    console.log(`[${startTimestamp}] [Upload] Processing PDF:`, fileToUpload.name);
+
     setUploading(true)
     setUploadProgress(0)
+    setUploadStatus("Preparing upload...")
 
     // Simulate upload progress
     const progressInterval = setInterval(() => {
       setUploadProgress((prev) => {
-        if (prev >= 90) {
+        if (prev >= 70) {
           clearInterval(progressInterval)
           return prev
         }
@@ -52,67 +65,152 @@ export default function UploadPage() {
     }, 200)
 
     try {
-      // Extract text from PDF client-side using FileReader
-      const extractPDFText = async (file: File): Promise<string> => {
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = async (e) => {
-            try {
-              const arrayBuffer = e.target?.result as ArrayBuffer
-              // For now, convert to base64 and let backend handle extraction
-              // In production, you'd use pdf.js here
-              const base64 = btoa(
-                new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
-              )
-              resolve(base64)
-            } catch (error) {
-              reject(error)
-            }
-          }
-          reader.onerror = reject
-          reader.readAsArrayBuffer(file)
-        })
-      }
+      setUploadProgress(10)
+      setUploadStatus("Extracting PDF text...")
 
-      console.log("[Upload] Extracting PDF text...")
-      const pdfContent = await extractPDFText(fileToUpload)
+      // Extract text from PDF using react-pdftotext
+      const extractStartTime = Date.now();
+      console.log(`[${new Date().toISOString()}] [Upload] Starting PDF text extraction...`);
+      const extractedText = await pdfToText(fileToUpload)
+      const extractEndTime = Date.now();
 
-      console.log("[Upload] Sending to backend...")
-      const response = await fetch("/api/upload-pdf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: pdfContent,
+      console.log(`[${new Date().toISOString()}] [Upload] Extraction complete in ${(extractEndTime - extractStartTime) / 1000}s, text length: ${extractedText.length} chars`);
+
+      setUploadProgress(30)
+      setUploadStatus("Starting chunked upload...")
+
+      // Prepare chunked upload
+      const CHUNK_SIZE = 10000;
+      const totalChunks = Math.ceil(extractedText.length / CHUNK_SIZE);
+      const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+      console.log(`[${new Date().toISOString()}] [Upload] Split into ${totalChunks} chunks (Total: ${extractedText.length} chars)`);
+
+      let uploadData = null;
+
+      // Send chunks sequentially
+      for (let i = 0; i < totalChunks; i++) {
+        const chunk = extractedText.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+
+        const chunkPayload = {
+          requestId,
           fileName: fileToUpload.name,
           studentId: localStorage.getItem("studentId") || "guest-user",
-        }),
-      })
+          chunk,
+          chunkIndex: i,
+          totalChunks
+        };
 
-      if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`)
+        setUploadStatus(`Uploading chunk ${i + 1}/${totalChunks}...`);
+
+        const response = await fetch("/api/upload-pdf", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(chunkPayload),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Upload failed at chunk ${i + 1}: ${response.status}`);
+        }
+
+        // Update progress (30% to 90%)
+        const chunkProgress = 30 + Math.round(((i + 1) / totalChunks) * 60);
+        setUploadProgress(chunkProgress);
+
+        // Last chunk returns the final response
+        if (i === totalChunks - 1) {
+          uploadData = await response.json();
+        }
       }
 
-      const data = await response.json()
+      setUploadStatus("Processing PDF in background...")
+
+      console.log(`[${new Date().toISOString()}] [Upload] Upload accepted! RequestId: ${uploadData.requestId}`);
+      console.log(`[${new Date().toISOString()}] [Upload] Starting to poll for completion...`);
+
+      // Start polling for completion
+      const pollResult = await pollForCompletion(uploadData.requestId, uploadStartTime);
+
+      const successTimestamp = new Date().toISOString();
+      const totalDuration = (Date.now() - uploadStartTime) / 1000;
+      console.log(`[${successTimestamp}] [Upload] ✅ SUCCESS! Total time: ${totalDuration}s`);
+      console.log(`[${successTimestamp}] [Upload] Final data:`, pollResult);
 
       clearInterval(progressInterval)
       setUploadProgress(100)
-      setSuggestedTopics(data.suggestedTopics || [])
-      setDocId(data.docId || "")
 
-      // Auto-select all topics
-      setSelectedTopics(data.suggestedTopics || [])
+      if (pollResult.success && pollResult.suggestedTopics) {
+        setSuggestedTopics(pollResult.suggestedTopics)
+        setDocId(pollResult.docId || uploadData.requestId)
+        setSelectedTopics(pollResult.suggestedTopics)
+      } else {
+        throw new Error("Invalid response from server")
+      }
     } catch (error) {
-      console.error("[v0] Upload error:", error)
-      clearInterval(progressInterval)
-      // Demo fallback
-      setUploadProgress(100)
-      const demoTopics = ["Mathematics", "Physics", "Chemistry", "Biology"]
-      setSuggestedTopics(demoTopics)
-      setSelectedTopics(demoTopics)
-      setDocId("demo-doc-id")
+      const errorTimestamp = new Date().toISOString();
+      console.log(`[${errorTimestamp}] [Upload] Error:`, error)
+
+      toast({
+        variant: "destructive",
+        title: "Upload Failed",
+        description: (error as Error).message || "Failed to upload PDF. Please try again."
+      })
+
+      setUploadStatus("Upload failed")
     } finally {
+      clearInterval(progressInterval)
       setUploading(false)
     }
+  }
+
+  const pollForCompletion = async (requestId: string, startTime: number): Promise<any> => {
+    const maxAttempts = 60  // Poll for up to 2 minutes
+    let attempts = 0
+
+    while (attempts < maxAttempts) {
+      const pollTimestamp = new Date().toISOString();
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+      console.log(`[${pollTimestamp}] [Upload] Poll attempt ${attempts + 1}/${maxAttempts} (${elapsed}s elapsed)`);
+
+      setUploadStatus(`Processing PDF... (${elapsed}s)`);
+
+      try {
+        const statusRes = await fetch(`/api/upload-status?requestId=${requestId}`)
+        const statusData = await statusRes.json()
+
+        console.log(`[${new Date().toISOString()}] [Upload] Status: ${statusData.status}`);
+
+        if (statusData.status === "complete") {
+          console.log(`[${new Date().toISOString()}] [Upload] ✅ Processing complete!`);
+          setUploadStatus("Processing complete!");
+
+          toast({
+            title: "Success!",
+            description: "PDF processed successfully"
+          })
+
+          return statusData
+        }
+
+        if (statusData.status === "error") {
+          throw new Error(statusData.message || "Processing failed")
+        }
+
+        // Update progress based on elapsed time
+        const estimatedProgress = Math.min(70 + (attempts * 2), 95);
+        setUploadProgress(estimatedProgress);
+
+        // Wait 2 seconds before next poll
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        attempts++
+      } catch (error) {
+        console.log(`[${new Date().toISOString()}] [Upload] Poll error:`, error);
+        throw error;
+      }
+    }
+
+    throw new Error("Processing timeout - please try again")
   }
 
   const toggleTopic = (topic: string) => {
@@ -185,14 +283,20 @@ export default function UploadPage() {
             {uploadProgress === 100 && <CheckCircle2 className="w-6 h-6 text-green-500" />}
           </div>
 
-          {uploading && (
-            <div className="space-y-2">
-              <Progress value={uploadProgress} className="h-2" />
-              <p className="text-sm text-gray-400 text-center">Uploading... {uploadProgress}%</p>
+          {uploading ? (
+            <div className="space-y-4">
+              <div className="flex flex-col items-center justify-center py-12 space-y-4">
+                <Loader2 className="h-12 w-12 animate-spin text-primary text-white" />
+                <div className="text-center space-y-2">
+                  <p className="text-lg font-medium">{uploadStatus}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {uploadProgress}% complete
+                  </p>
+                </div>
+                <Progress value={uploadProgress} className="w-full max-w-md" />
+              </div>
             </div>
-          )}
-
-          {!uploading && uploadProgress === 100 && (
+          ) : suggestedTopics.length > 0 ? (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -201,7 +305,7 @@ export default function UploadPage() {
               <CheckCircle2 className="w-5 h-5" />
               <span className="font-medium">Upload complete!</span>
             </motion.div>
-          )}
+          ) : null}
         </motion.div>
       )}
 
